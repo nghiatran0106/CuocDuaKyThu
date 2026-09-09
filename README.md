@@ -1,5 +1,7 @@
 # Turbo Buddies — Cuộc đua kỳ thú
 
+Chơi bản public tại **https://nghiatran0106.github.io/CuocDuaKyThu/** — không cần đăng nhập ChatGPT.
+
 Game đua xe hoạt hình chạy trực tiếp trên web, viết bằng TypeScript, Canvas 2D và Vite. Đồ họa SVG, nhân vật và âm thanh đều được tạo trong dự án; không cần tải tài nguyên game từ dịch vụ khác.
 
 ## Chơi game
