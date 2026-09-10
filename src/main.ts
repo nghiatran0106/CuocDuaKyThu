@@ -24,7 +24,16 @@ import {
   type Result,
 } from "./data";
 import { RaceGame, type GameEvent } from "./game/engine";
+import { RaceMinimap, type MapPoint, type MapRacer } from "./game/minimap";
 import { MultiplayerSession, type MultiplayerEvent } from "./multiplayer";
+import {
+  getAppState,
+  subscribeAppState,
+  installApp,
+  applyAppUpdate,
+  initPwa,
+  type AppState,
+} from "./pwa";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
 const overlay = document.querySelector<HTMLDivElement>("#overlay-root")!;
@@ -39,6 +48,16 @@ let page = "home",
   toastTimer = 0,
   lastFocus: HTMLElement | null = null;
 let popupTimeout = 0;
+let minimap: RaceMinimap | null = null;
+let cornerSymbol = "";
+let updatingApp = false;
+type CornerAdvice = {
+  direction: "left" | "right" | "straight";
+  severity: "hairpin" | "sharp" | "bend" | "straight";
+  distance: number;
+  speed: number;
+  name: string;
+};
 const nav = [
   ["home", "home", "Sảnh đua"],
   ["characters", "users", "Nhân vật"],
@@ -57,6 +76,84 @@ function toast(message: string) {
   root.classList.add("visible");
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => root.classList.remove("visible"), 3600);
+}
+function appInstallCard() {
+  return `<section class="app-install-card" id="app-install-card" aria-label="Ứng dụng Turbo Buddies"><span class="app-install-art" aria-hidden="true"><svg width="30" height="34" viewBox="0 0 30 34" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="18" height="30" rx="4"/><path d="M12 6h6m-4 22h2M15 11v10m-4-4 4 4 4-4"/></svg></span><div class="app-install-copy"><span class="eyebrow">ĐƯỜNG ĐUA TRONG TÚI BẠN</span><strong id="app-install-title">Mang Turbo Buddies lên điện thoại</strong><p>Mở từ màn hình chính. Chơi với máy cả khi mất mạng.</p><span class="app-install-status" id="app-install-status" role="status"></span></div><div class="app-install-actions"><span class="app-installed-badge" hidden>${icon("check", 14)}Đã cài trên thiết bị</span><button class="btn dark app-install-button" id="app-install-button" data-action="install" aria-label="Cài Turbo Buddies">Cài Turbo Buddies ${icon("arrow", 15)}</button><button class="btn outlined app-update-button" id="app-update-button" data-action="update-app" aria-label="Cập nhật ứng dụng" hidden>Cập nhật ứng dụng ${icon("spark", 14)}</button><button class="text-button app-install-guide-button" data-action="install-info">Cách cài trên điện thoại ${icon("chevron", 12)}</button></div></section>`;
+}
+function updateAppInstallCard(state: AppState = getAppState()) {
+  const card = document.getElementById("app-install-card");
+  if (!card) return;
+  card.dataset.installed = String(state.installed);
+  card.dataset.offlineReady = String(state.offlineReady);
+  card.dataset.online = String(state.online);
+  document.getElementById("app-install-title")!.textContent = state.installed
+    ? "Turbo Buddies đã có trên thiết bị của bạn"
+    : "Mang Turbo Buddies lên điện thoại";
+  const status = document.getElementById("app-install-status")!;
+  const statusText = state.offlineReady
+    ? state.online
+      ? "Sẵn sàng đua ngoại tuyến"
+      : "Đang ngoại tuyến · Đua với máy vẫn sẵn sàng"
+    : state.offlineError
+      ? "Chưa lưu được game · Cần mạng để mở lại"
+      : state.online
+        ? "Chơi ngoại tuyến chưa sẵn sàng"
+        : "Đang ngoại tuyến · Chưa có bản lưu đầy đủ";
+  if (status.textContent !== statusText) status.textContent = statusText;
+  const installButton = document.getElementById(
+    "app-install-button",
+  ) as HTMLButtonElement;
+  installButton.hidden = state.installed;
+  installButton.disabled = updatingApp;
+  card.querySelector<HTMLElement>(".app-installed-badge")!.hidden =
+    !state.installed;
+  const updateButton = document.getElementById(
+    "app-update-button",
+  ) as HTMLButtonElement;
+  updateButton.hidden = !state.updateAvailable || racing || page !== "home";
+  updateButton.disabled = updatingApp;
+  updateButton.textContent = updatingApp
+    ? "Đang cập nhật…"
+    : "Cập nhật ứng dụng";
+}
+function showAppInstallInfo() {
+  const ios =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const iosSteps = `<ol class="app-install-steps"><li>Mở trang game này trong <strong>Safari</strong>.</li><li>Chạm <strong>Chia sẻ</strong>, rồi chọn <strong>Thêm vào MH chính</strong>.</li><li>Bật <strong>Mở dưới dạng ứng dụng web</strong> nếu thấy tùy chọn này, rồi chạm <strong>Thêm</strong>.</li></ol>`;
+  showModal(
+    `<div id="app-install-guide"><span class="modal-symbol">${icon("gamepad", 30)}</span><span class="eyebrow">CHẠM BIỂU TƯỢNG. VÀO ĐƯỜNG ĐUA.</span><h2>Cài Turbo Buddies</h2><p>Thêm game vào màn hình chính để mở như một ứng dụng. Bạn xác nhận việc cài đặt trên thiết bị của mình.</p>${ios ? iosSteps : `<ol class="app-install-steps"><li>Trên Android, mở game bằng <strong>Chrome</strong>.</li><li>Mở menu <strong>⋮</strong>, chọn <strong>Cài đặt ứng dụng</strong> hoặc <strong>Thêm vào màn hình chính</strong>, rồi xác nhận.</li><li>Trên máy tính, tìm biểu tượng cài đặt trong thanh địa chỉ hoặc menu trình duyệt.</li></ol><details class="app-ios-guide"><summary>Dùng iPhone hoặc iPad?</summary>${iosSteps}</details>`}<div class="tip-box">${icon("check")}<span>Chờ trạng thái <strong>Sẵn sàng đua ngoại tuyến</strong> ở sảnh trước khi ngắt mạng. Đua với máy không cần mạng; đua cùng bạn bè cần kết nối.</span></div><p class="small-note">Nếu đang mở game bên trong ứng dụng nhắn tin, hãy mở lại bằng trình duyệt của điện thoại.</p><button class="btn primary full-width" data-close>Đã hiểu ${icon("check")}</button></div>`,
+  );
+}
+async function requestAppInstall() {
+  if (racing || updatingApp) return;
+  try {
+    // Keep the native prompt in the button's user gesture.
+    const result = await installApp();
+    if (result === "unavailable") showAppInstallInfo();
+    else if (result === "dismissed")
+      toast("Bạn có thể cài game bất cứ lúc nào ở sảnh đua.");
+    else toast("Đã gửi yêu cầu cài Turbo Buddies lên thiết bị.");
+  } catch {
+    showAppInstallInfo();
+  }
+}
+async function updateInstalledApp() {
+  if (racing || updatingApp || page !== "home" || network || overlay.innerHTML)
+    return;
+  updatingApp = true;
+  updateAppInstallCard();
+  try {
+    await applyAppUpdate();
+  } catch (error) {
+    updatingApp = false;
+    updateAppInstallCard();
+    toast(
+      error instanceof Error
+        ? error.message
+        : "Chưa cập nhật được ứng dụng. Hãy thử lại khi có mạng.",
+    );
+  }
 }
 function statsBars(n: number) {
   return `<span class="stat-bars">${Array.from({ length: 5 }, (_, i) => `<i class="${i < n ? "filled" : ""}"></i>`).join("")}</span>`;
@@ -83,16 +180,17 @@ function render() {
  <main id="main-content"><div class="page-intro"><div><span class="eyebrow">MỖI VÒNG ĐUA, MỘT NIỀM VUI</span><h1>${page === "home" ? "Chào tay đua, lên xe thôi!" : title}<span class="heading-spark">${icon(page === "home" ? "spark" : nav.find((n) => n[0] === page)?.[1] || "flag", 25)}</span></h1></div><span class="play-badge"><span class="status-dot"></span>Chơi ngay trên trình duyệt</span></div>${page === "home" ? homeContent() : page === "characters" ? `<div class="page-description">Bốn cá tính. Bốn phong cách. Chọn người bạn đồng hành của bạn.</div>${characterCards(true)}<div class="page-bottom-cta"><span>${icon("check")} Đã chọn <strong>${c.name}</strong> — cùng nhau chinh phục đường đua!</span><button class="btn primary" data-action="race">Vào đường đua ${icon("arrow")}</button></div>` : page === "tracks" ? `<div class="page-description">Một chuyến đi nhỏ, vô vàn điều bất ngờ. Cả 3 đường đua đã sẵn sàng.</div>${trackCards()}<div class="page-bottom-cta"><span>${icon("map")} Đường đua đã chọn: <strong>${getTrack().name}</strong></span><button class="btn primary" data-action="race">Đua ngay ${icon("arrow")}</button></div>` : page === "powerups" ? powerupPage() : achievementPage()}
  <footer class="main-footer"><span>${icon("flag", 14)} TURBO BUDDIES <i>·</i> Cuộc đua kỳ thú</span><span>Ít luật chơi. Nhiều niềm vui. ${icon("heart", 13)}</span></footer></main></div>`;
   bindApp();
+  updateAppInstallCard();
 }
 function homeContent() {
-  return `<section class="hero"><div class="hero-art">${heroArt().replace("<svg ", '<svg preserveAspectRatio="xMidYMid slice" ')}</div><div class="hero-content"><span class="hero-tag"><span></span> ĐƯỜNG ĐUA NHỎ. NIỀM VUI LỚN.</span><h2>ĐẠP GA.<br><em>BẬT CHẤT.</em></h2><p>Những người bạn đáng yêu. Những cú bứt tốc bất ngờ.<br>Cuộc đua vui nhất hôm nay đang chờ bạn!</p><div class="hero-buttons"><button class="btn primary" data-action="race">${icon("play", 18)} Đua ngay ${icon("arrow", 18)}</button><button class="btn glass" data-action="friends">${icon("users", 17)} Rủ bạn cùng đua</button></div><div class="hero-features"><span>${icon("gamepad", 15)} Dễ chơi, khó dừng</span><span>${icon("bolt", 15)} Power-up cực vui</span><span>${icon("heart", 15)} Miễn phí</span></div></div><div class="hero-sticker">100%<span>GOOD VIBES</span>${icon("spark", 15)}</div><div class="hero-bottom-label"><span class="status-dot"></span> ĐẢO NẮNG VÀNG <span>01 / 03</span></div></section>
- <div class="lobby-layout"><div class="lobby-main"><section>${sectionHeader("BIỆT ĐỘI SIÊU QUẬY", "Chọn bạn đồng hành", "Khám phá nhân vật", "characters")}${characterCards()}</section><section class="tracks-section">${sectionHeader("MỖI NƠI MỘT CUỘC VUI", "Hôm nay, mình đua ở đâu?", "Xem đường đua", "tracks")}${trackCards()}</section><section class="powerup-banner"><span class="powerup-banner-art">${powerupArt("nitro")}${powerupArt("shield")}${powerupArt("lightning")}</span><div><span class="eyebrow">MỘT CHÚT BẤT NGỜ</span><h3>Lật ngược cuộc đua trong một nốt nhạc.</h3><p>Nhặt hộp bí ẩn. Bật power-up. Tạo khoảnh khắc của riêng bạn.</p></div><button class="round-button" data-page="powerups" aria-label="Khám phá power-up">${icon("arrow")}</button></section></div><aside class="race-sidebar">${racePanel()}<section class="mission-card"><div class="small-section-heading"><span>${icon("medal", 18)} THỬ THÁCH TÂN BINH</span><span class="mission-tag">${Math.min(profile.races, 3)}/3</span></div><h3>Khởi động nào!</h3><p>Hoàn thành 3 cuộc đua đầu tiên<br>để mở huy hiệu Tân binh.</p><div class="progress-track"><i style="width:${Math.min((profile.races / 3) * 100, 100)}%"></i></div><div class="mission-footer"><span>${icon("trophy", 15)} Huy hiệu Tân binh</span><span>${profile.races >= 3 ? "Đã mở khóa ✓" : `${Math.min(profile.races, 3)} / 3`}</span></div></section><section class="quick-help"><span class="eyebrow">BÍ KÍP NHỎ, CUỘC VUI LỚN</span><h3>Vào cua cho thật ngầu.</h3><p>Giữ <kbd>Shift</kbd> khi rẽ để drift.<br>Thả ra đúng lúc để bứt tốc!</p><button class="text-button" data-action="help">Xem cách chơi ${icon("arrow", 15)}</button><span class="help-decoration">${icon("bolt", 50)}</span></section></aside></div>`;
+  return `${appInstallCard()}<section class="hero"><div class="hero-art">${heroArt().replace("<svg ", '<svg preserveAspectRatio="xMidYMid slice" ')}</div><div class="hero-content"><span class="hero-tag"><span></span> ĐƯỜNG ĐUA NHỎ. NIỀM VUI LỚN.</span><h2>ĐẠP GA.<br><em>BẬT CHẤT.</em></h2><p>Những người bạn đáng yêu. Những cú bứt tốc bất ngờ.<br>Cuộc đua vui nhất hôm nay đang chờ bạn!</p><div class="hero-buttons"><button class="btn primary" data-action="race">${icon("play", 18)} Đua ngay ${icon("arrow", 18)}</button><button class="btn glass" data-action="friends">${icon("users", 17)} Rủ bạn cùng đua</button></div><div class="hero-features"><span>${icon("gamepad", 15)} Dễ chơi, khó dừng</span><span>${icon("bolt", 15)} Power-up cực vui</span><span>${icon("heart", 15)} Miễn phí</span></div></div><div class="hero-sticker">100%<span>GOOD VIBES</span>${icon("spark", 15)}</div><div class="hero-bottom-label"><span class="status-dot"></span> ĐẢO NẮNG VÀNG <span>01 / 03</span></div></section>
+ <div class="lobby-layout"><div class="lobby-main"><section>${sectionHeader("BIỆT ĐỘI SIÊU QUẬY", "Chọn bạn đồng hành", "Khám phá nhân vật", "characters")}${characterCards()}</section><section class="tracks-section">${sectionHeader("MỖI NƠI MỘT CUỘC VUI", "Hôm nay, mình đua ở đâu?", "Xem đường đua", "tracks")}${trackCards()}</section><section class="powerup-banner"><span class="powerup-banner-art">${powerupArt("nitro")}${powerupArt("shield")}${powerupArt("lightning")}</span><div><span class="eyebrow">MỘT CHÚT BẤT NGỜ</span><h3>Lật ngược cuộc đua trong một nốt nhạc.</h3><p>Nhặt hộp bí ẩn. Bật power-up. Tạo khoảnh khắc của riêng bạn.</p></div><button class="round-button" data-page="powerups" aria-label="Khám phá power-up">${icon("arrow")}</button></section></div><aside class="race-sidebar">${racePanel()}<section class="mission-card"><div class="small-section-heading"><span>${icon("medal", 18)} THỬ THÁCH TÂN BINH</span><span class="mission-tag">${Math.min(profile.races, 3)}/3</span></div><h3>Khởi động nào!</h3><p>Hoàn thành 3 cuộc đua đầu tiên<br>để mở huy hiệu Tân binh.</p><div class="progress-track"><i style="width:${Math.min((profile.races / 3) * 100, 100)}%"></i></div><div class="mission-footer"><span>${icon("trophy", 15)} Huy hiệu Tân binh</span><span>${profile.races >= 3 ? "Đã mở khóa ✓" : `${Math.min(profile.races, 3)} / 3`}</span></div></section><section class="quick-help"><span class="eyebrow">BÍ KÍP NHỎ, CUỘC VUI LỚN</span><h3>Vào cua cho thật ngầu.</h3><p>Phanh trước cua gấp. Giữ <kbd>Shift</kbd><br>khi ôm cua, thả ra để bứt tốc!</p><button class="text-button" data-action="help">Xem cách chơi ${icon("arrow", 15)}</button><span class="help-decoration">${icon("bolt", 50)}</span></section></aside></div>`;
 }
 function racePanel() {
   return `<section class="race-panel"><div class="small-section-heading"><span><i class="status-dot"></i> SẴN SÀNG XUẤT PHÁT</span>${icon("flag", 20)}</div><h3>Cuộc đua của bạn</h3><div class="race-mode-switch" role="group" aria-label="Chế độ chơi"><button class="active" data-mode="solo">${icon("gamepad", 16)} Đua với máy</button><button data-action="friends">${icon("users", 16)} Cùng bạn bè</button></div><label class="field-label" for="track-select">ĐƯỜNG ĐUA</label><div class="select-wrap">${icon("map", 17)}<select id="track-select">${tracks.map((t) => `<option value="${t.id}" ${profile.track === t.id ? "selected" : ""}>${t.name}</option>`).join("")}</select>${icon("down", 13)}</div><div class="race-details"><span>${icon("flag", 15)} 3 vòng đua</span><span>${icon("users", 15)} 4 tay đua</span></div><div class="race-driver"><span class="mini-portrait" style="background:${getCharacter().color}">${characterArt(profile.character)}</span><div><small>TAY ĐUA CỦA BẠN</small><strong>${getCharacter().name}</strong></div><span class="driver-check">${icon("check", 16)}</span></div><button class="btn primary start-button" data-action="race">Bắt đầu đua ${icon("arrow", 20)}</button><span class="race-hint">${icon("spark", 12)} Không cần tải. Vào là vui!</span></section>`;
 }
 function powerupPage() {
-  return `<div class="page-description">Nhặt hộp dấu hỏi trên đường, rồi nhấn <kbd>Space</kbd> để tạo bất ngờ. Mỗi vật phẩm là một cơ hội!</div><div class="powerup-grid">${powerups.map((p) => `<article class="powerup-card" style="--power-color:${p.color}"><span class="powerup-picture">${powerupArt(p.id)}</span><span class="eyebrow">${p.key}</span><h2>${p.name}</h2><p>${p.description}</p><button class="text-button" data-preview-powerup="${p.id}">Thử hiệu ứng ${icon("spark", 15)}</button></article>`).join("")}</div><div class="page-bottom-cta"><span>${icon("bolt")} Chỉ giữ được một power-up. Dùng đúng lúc để dẫn đầu!</span><button class="btn primary" data-action="race">Thử trên đường đua ${icon("arrow")}</button></div>`;
+  return `<div class="page-description">Mỗi vòng có 3 trạm hộp dấu hỏi. Chọn hướng nhặt, rồi nhấn <kbd>Space</kbd> để sử dụng đúng lúc!</div><div class="powerup-grid">${powerups.map((p) => `<article class="powerup-card" style="--power-color:${p.color}"><span class="powerup-picture">${powerupArt(p.id)}</span><span class="eyebrow">${p.key}</span><h2>${p.name}</h2><p>${p.description}</p><button class="text-button" data-preview-powerup="${p.id}">Thử hiệu ứng ${icon("spark", 15)}</button></article>`).join("")}</div><div class="page-bottom-cta"><span>${icon("bolt")} Chỉ giữ được một power-up. Dùng đúng lúc để dẫn đầu!</span><button class="btn primary" data-action="race">Thử trên đường đua ${icon("arrow")}</button></div>`;
 }
 function achievementPage() {
   const badges = [
@@ -190,6 +288,9 @@ function bindApp() {
   );
 }
 function action(type: string) {
+  if (type === "install") void requestAppInstall();
+  if (type === "install-info") showAppInstallInfo();
+  if (type === "update-app") void updateInstalledApp();
   if (type === "race") startRace();
   if (type === "friends") friendsModal();
   if (type === "settings") settingsModal();
@@ -231,13 +332,16 @@ function closeModal() {
 }
 function helpModal() {
   showModal(
-    `<span class="modal-symbol">${icon("gamepad", 30)}</span><span class="eyebrow">30 GIÂY LÀ BIẾT CHƠI</span><h2>Dễ chơi. Vui hết cỡ.</h2><p>Xe tự tăng ga — bạn chỉ cần tập trung vào những khúc cua!</p><div class="controls-list"><div><span><kbd>←</kbd> <kbd>→</kbd> / <kbd>A</kbd> <kbd>D</kbd></span><strong>Rẽ trái / phải</strong></div><div><span><kbd>↓</kbd> / <kbd>S</kbd></span><strong>Phanh khi vào cua</strong></div><div><span><kbd>Shift</kbd> + rẽ</span><strong>Drift để tích tăng tốc</strong></div><div><span><kbd>Space</kbd></span><strong>Kích hoạt power-up</strong></div><div><span><kbd>Esc</kbd></span><strong>Tạm dừng cuộc đua với máy</strong></div></div><div class="tip-box">${icon("bolt")}<span>Nhặt hộp <strong>?</strong> để nhận vật phẩm, gom xu vàng và giữ xe trong đường. Trên điện thoại, dùng các nút cảm ứng.</span></div><button class="btn primary full-width" data-close>Sẵn sàng rồi! ${icon("check")}</button>`,
+    `<span class="modal-symbol">${icon("gamepad", 30)}</span><span class="eyebrow">30 GIÂY LÀ BIẾT CHƠI</span><h2>Dễ chơi. Vui hết cỡ.</h2><p>Xe tự tăng ga. Xem bản đồ, phanh trước cua gấp rồi giữ hướng để ôm cua!</p><div class="controls-list"><div><span><kbd>←</kbd> <kbd>→</kbd> / <kbd>A</kbd> <kbd>D</kbd></span><strong>Rẽ trái / phải</strong></div><div><span><kbd>↓</kbd> / <kbd>S</kbd></span><strong>Phanh trước cua gấp, cua kẹp tóc</strong></div><div><span><kbd>Shift</kbd> + rẽ</span><strong>Ôm cua để tích drift, thả để tăng tốc</strong></div><div><span><kbd>Space</kbd></span><strong>Kích hoạt power-up</strong></div><div><span><kbd>Esc</kbd></span><strong>Tạm dừng cuộc đua với máy</strong></div></div><div class="tip-box">${icon("bolt")}<span>Mỗi vòng chỉ có <strong>3 trạm vật phẩm</strong>: chọn vị trí nhặt và dùng đúng lúc. Drift chỉ tích khi bạn thật sự ôm cua, giữ Shift trên đường thẳng không tích lực. Xem tốc độ gợi ý trước cua kẹp tóc; trên điện thoại, dùng nút Phanh và Drift.</span></div><button class="btn primary full-width" data-close>Sẵn sàng rồi! ${icon("check")}</button>`,
   );
 }
 function settingsModal() {
   showModal(
-    `<span class="eyebrow">THEO CÁCH CỦA BẠN</span><h2>Góc tay đua</h2><form id="settings-form"><label class="input-label">Tên tay đua<input id="player-name" name="name" value="${escapeHtml(profile.name)}" maxlength="20" required placeholder="Tên của bạn" autocomplete="nickname"></label><label class="input-label">Độ khó khi đua với máy<select name="difficulty"><option value="easy" ${profile.difficulty === "easy" ? "selected" : ""}>Thư giãn — dễ làm quen</option><option value="normal" ${profile.difficulty === "normal" ? "selected" : ""}>Vừa sức — vui là chính</option><option value="hard" ${profile.difficulty === "hard" ? "selected" : ""}>Thử thách — đua hết mình</option></select></label><label class="toggle-row"><span>${icon("sound")} Âm thanh trò chơi</span><input type="checkbox" name="sound" ${profile.sound ? "checked" : ""}></label><p class="small-note">Tên, lựa chọn và thành tích được lưu trên trình duyệt của bạn.</p><button class="btn primary full-width" type="submit">Lưu lựa chọn ${icon("check")}</button></form>`,
+    `<span class="eyebrow">THEO CÁCH CỦA BẠN</span><h2>Góc tay đua</h2><form id="settings-form"><label class="input-label">Tên tay đua<input id="player-name" name="name" value="${escapeHtml(profile.name)}" maxlength="20" required placeholder="Tên của bạn" autocomplete="nickname"></label><label class="input-label">Độ khó khi đua với máy<select name="difficulty"><option value="easy" ${profile.difficulty === "easy" ? "selected" : ""}>Thư giãn — đối thủ phanh sớm, dễ vượt</option><option value="normal" ${profile.difficulty === "normal" ? "selected" : ""}>Vừa sức — đối thủ ôm cua, biết vượt</option><option value="hard" ${profile.difficulty === "hard" ? "selected" : ""}>Thử thách — phanh muộn, drift và bứt tốc</option></select></label><label class="toggle-row"><span>${icon("sound")} Âm thanh trò chơi</span><input type="checkbox" name="sound" ${profile.sound ? "checked" : ""}></label><p class="small-note">Tên, lựa chọn và thành tích được lưu trên trình duyệt của bạn.</p><button class="btn primary full-width" type="submit">Lưu lựa chọn ${icon("check")}</button></form><div class="settings-app-link"><span>${icon("gamepad", 18)} Turbo Buddies trên màn hình chính</span><button class="text-button" data-app-install-info>Cách cài ứng dụng ${icon("arrow", 14)}</button></div>`,
   );
+  overlay
+    .querySelector("[data-app-install-info]")!
+    .addEventListener("click", showAppInstallInfo);
   overlay.querySelector("form")!.addEventListener("submit", (e) => {
     e.preventDefault();
     const form = new FormData(e.target as HTMLFormElement);
@@ -254,10 +358,26 @@ function settingsModal() {
   });
 }
 function friendsModal() {
+  if (updatingApp) return;
+  if (!getAppState().online) {
+    showModal(
+      `<div id="offline-friends"><span class="modal-symbol">${icon("wifi", 30)}</span><span class="eyebrow">ĐANG NGOẠI TUYẾN</span><h2>Đua cùng bạn cần có mạng</h2><p>Bật Wi-Fi hoặc dữ liệu di động để tạo và tham gia phòng. Bạn vẫn có thể luyện ôm cua và drift khi đua với máy.</p><button class="btn primary full-width" id="offline-solo">Đua với máy ${icon("play", 16)}</button><button class="text-button" data-close>Trở lại sảnh</button></div>`,
+    );
+    overlay
+      .querySelector("#offline-solo")!
+      .addEventListener("click", () => startRace());
+    return;
+  }
   showModal(
     `<span class="modal-symbol">${icon("users", 30)}</span><span class="eyebrow">CÀNG ĐÔNG, CÀNG VUI</span><h2>Hẹn nhau ở vạch xuất phát.</h2><p>Tạo phòng riêng cho 2–4 người hoặc nhập mã phòng của bạn bè.</p><label class="input-label">Tên của bạn<input id="room-name" maxlength="20" value="${escapeHtml(profile.name)}" autocomplete="nickname"></label><button class="btn primary full-width" id="create-room">${icon("users")} Tạo phòng mới ${icon("arrow")}</button><div class="or-divider"><span>hoặc tham gia phòng</span></div><form id="join-room-form" class="join-room-form"><input aria-label="Mã phòng" id="room-code" placeholder="NHẬP MÃ 6 KÝ TỰ" maxlength="6" minlength="6" pattern="[A-Za-z0-9]{6}" autocomplete="off" required><button class="btn dark" type="submit">Vào phòng ${icon("arrow", 16)}</button></form><p id="network-status" class="network-status" role="status"></p><p class="small-note">Giữ tab mở khi chơi. Kết nối trực tiếp giữa các tay đua; một số mạng hạn chế WebRTC có thể không kết nối được.</p>`,
   );
   const connect = async (code?: string) => {
+    if (!getAppState().online) {
+      const status = overlay.querySelector("#network-status");
+      if (status)
+        status.textContent = "Đang ngoại tuyến. Hãy kết nối mạng rồi thử lại.";
+      return;
+    }
     const name = (
       overlay.querySelector<HTMLInputElement>("#room-name")?.value.trim() ||
       profile.name
@@ -387,20 +507,77 @@ function handleNetworkEvent(event: MultiplayerEvent) {
     }
   }
 }
+function raceNavigation() {
+  return `<aside class="race-minimap" aria-label="Bản đồ đường đua"><div class="minimap-heading">${icon("map", 12)}<span>LỘ TRÌNH</span>${icon("flag", 12)}</div><svg id="hud-minimap" viewBox="0 0 200 152" role="img" aria-label="Lộ trình và vị trí các tay đua"></svg><div class="minimap-legend"><span><i class="minimap-player-key"></i>Bạn</span><span><i class="minimap-rivals-key"></i>Đối thủ</span><span>${icon("flag", 9)}Đích</span></div></aside><div class="corner-advice" id="hud-corner" aria-label="Hướng dẫn vào cua"><div class="corner-main"><svg class="corner-arrow" viewBox="0 0 40 44" aria-hidden="true"><path id="hud-corner-arrow" d="M20 37V9m-8 8 8-8 8 8"/></svg><div class="corner-copy"><small id="hud-corner-distance">PHÍA TRƯỚC</small><strong id="hud-corner-name">Đường đua sẵn sàng</strong><span id="hud-corner-speed">Quan sát bản đồ để chọn hướng</span></div></div><div id="hud-grip" class="grip-warning" role="status" hidden></div></div>`;
+}
+function updateCornerAdvice(
+  corner: CornerAdvice,
+  speed: number,
+  offroad: boolean,
+  gripWarning: boolean,
+) {
+  const panel = document.getElementById("hud-corner");
+  if (!panel) return;
+  const straight = corner.severity === "straight";
+  const direction = corner.direction === "left" ? "trái" : "phải";
+  const name = straight
+    ? "Đường thẳng"
+    : `${corner.severity === "hairpin" ? "Kẹp tóc" : corner.severity === "sharp" ? "Cua gấp" : "Cua"} ${direction}`;
+  const braking =
+    !straight && speed > corner.speed + 8 && corner.distance < 220;
+  panel.classList.toggle("is-braking", braking);
+  panel.title = corner.name;
+  document.getElementById("hud-corner-name")!.textContent = name;
+  document.getElementById("hud-corner-distance")!.textContent = straight
+    ? "QUAN SÁT LỘ TRÌNH"
+    : corner.distance < 8
+      ? "ĐANG VÀO CUA"
+      : `CÒN ${Math.ceil(corner.distance / 10) * 10} M`;
+  document.getElementById("hud-corner-speed")!.textContent = straight
+    ? "Giữ ga, chuẩn bị cho cua tiếp theo"
+    : `${braking ? "Phanh xuống" : "Tốc độ vào cua"} ${Math.round(corner.speed)} km/h`;
+  const symbol = `${corner.severity}:${corner.direction}`;
+  if (cornerSymbol !== symbol) {
+    cornerSymbol = symbol;
+    const arrow = document.getElementById("hud-corner-arrow")!;
+    const paths = {
+      straight: "M20 37V9m-8 8 8-8 8 8",
+      bend: "M30 37V28Q30 15 17 15H9m8-8-8 8 8 8",
+      sharp: "M30 37V15H9m8-8-8 8 8 8",
+      hairpin: "M31 37V17a10 10 0 0 0-20 0V28m-7-7 7 7 7-7",
+    };
+    arrow.setAttribute("d", paths[corner.severity]);
+    arrow.setAttribute(
+      "transform",
+      corner.direction === "right" ? "translate(40 0) scale(-1 1)" : "",
+    );
+  }
+  const warning = document.getElementById("hud-grip")!;
+  const warningText = offroad
+    ? "Ra lề · Đưa xe trở lại đường"
+    : gripWarning
+      ? "Mất độ bám · Phanh và ôm cua"
+      : "";
+  if (warning.textContent !== warningText) warning.textContent = warningText;
+  warning.hidden = !warningText;
+}
 function startRace(online = false, startAt?: number) {
-  if (racing) return;
+  if (racing || updatingApp) return;
   overlay.innerHTML = "";
   document.body.classList.remove("modal-open");
   racing = true;
+  updateAppInstallCard();
   raceOnline = online;
   currentPowerup = null;
+  cornerSymbol = "";
   const c = getCharacter();
   const race = document.createElement("section");
   race.id = "race-screen";
   race.setAttribute("aria-label", "Đường đua Turbo Buddies");
-  race.innerHTML = `<canvas id="race-canvas" aria-label="Đường đua. Dùng mũi tên để rẽ, Shift để drift, Space để dùng power-up."></canvas><div class="race-vignette"></div><div class="game-top"><div class="position-panel"><strong id="hud-position">1<span>/${online ? network?.players.length || 2 : 4}</span></strong><small>VỊ TRÍ</small></div><div class="lap-panel"><span id="hud-lap">VÒNG 1 / 3</span><strong id="hud-time">00:00.00</strong></div><div class="game-top-right"><span class="game-coins">${icon("coin")}<strong id="hud-coins">0</strong></span><button class="game-icon-button" id="game-sound" aria-label="Bật/tắt âm thanh">${icon(profile.sound ? "sound" : "mute")}</button><button class="game-icon-button" id="game-fullscreen" aria-label="Toàn màn hình">${icon("fullscreen")}</button><button class="game-icon-button" id="game-pause" aria-label="${online ? "Menu cuộc đua" : "Tạm dừng"}">${icon("pause")}</button></div></div><div class="game-progress"><i id="hud-progress"></i></div><div id="cinematic" class="cinematic"><span class="eyebrow">${online ? "CÙNG BẠN BÈ" : "TURBO BUDDIES PRESENTS"}</span><h2>${getTrack().name}</h2><p>3 vòng đua · ${c.name} đã sẵn sàng</p></div><div id="countdown" class="countdown" aria-live="assertive"></div><div id="powerup-popup" class="powerup-popup" role="status"></div><div class="game-bottom"><div class="speed-panel"><strong id="hud-speed">0</strong><span>KM/H</span><div class="drift-meter"><i id="hud-drift"></i></div><small>GIỮ SHIFT + RẼ ĐỂ DRIFT</small></div><div class="game-control-hint"><span><kbd>←</kbd><kbd>→</kbd> Rẽ</span><span><kbd>Shift</kbd> Drift</span><span><kbd>Space</kbd> Vật phẩm</span></div><button class="powerup-slot" id="use-powerup" aria-label="Kích hoạt power-up"><span id="held-powerup">?</span><span id="powerup-label">NHẶT VẬT PHẨM</span><kbd>SPACE</kbd></button></div><div class="touch-controls"><div class="touch-steering"><button data-input="ArrowLeft" aria-label="Rẽ trái">${icon("arrow", 26)}</button><button data-input="ArrowRight" aria-label="Rẽ phải">${icon("arrow", 26)}</button></div><div class="touch-actions"><button data-input="ArrowDown" aria-label="Phanh">PHANH</button><button data-input="Shift" aria-label="Drift">DRIFT</button></div></div><div id="race-modal"></div>`;
+  race.innerHTML = `<canvas id="race-canvas" aria-label="Đường đua. Mũi tên trái/phải để rẽ, xuống để phanh, Shift khi rẽ để drift, Space dùng power-up. Bản đồ và hướng dẫn vào cua ở hai góc trên."></canvas><div class="race-vignette"></div><div class="game-top"><div class="position-panel"><strong id="hud-position">1<span>/${online ? network?.players.length || 2 : 4}</span></strong><small>VỊ TRÍ</small></div><div class="lap-panel"><span id="hud-lap">VÒNG 1 / 3</span><strong id="hud-time">00:00.00</strong></div><div class="game-top-right"><span class="game-coins">${icon("coin")}<strong id="hud-coins">0</strong></span><button class="game-icon-button" id="game-sound" aria-label="Bật/tắt âm thanh">${icon(profile.sound ? "sound" : "mute")}</button><button class="game-icon-button" id="game-fullscreen" aria-label="Toàn màn hình">${icon("fullscreen")}</button><button class="game-icon-button" id="game-pause" aria-label="${online ? "Menu cuộc đua" : "Tạm dừng"}">${icon("pause")}</button></div></div><div class="game-progress"><i id="hud-progress"></i></div>${raceNavigation()}<div id="cinematic" class="cinematic"><span class="eyebrow">${online ? "CÙNG BẠN BÈ" : "TURBO BUDDIES PRESENTS"}</span><h2>${getTrack().name}</h2><p>3 vòng đua · ${c.name} đã sẵn sàng</p></div><div id="countdown" class="countdown" aria-live="assertive"></div><div id="powerup-popup" class="powerup-popup" role="status"></div><div class="game-bottom"><div class="speed-panel"><strong id="hud-speed">0</strong><span>KM/H</span><div class="drift-meter"><i id="hud-drift"></i></div><small>GIỮ SHIFT + RẼ ĐỂ DRIFT</small></div><div class="game-control-hint"><span><kbd>←</kbd><kbd>→</kbd> Rẽ</span><span><kbd>↓</kbd> Phanh</span><span><kbd>Shift</kbd> + rẽ Drift</span><span><kbd>Space</kbd> Vật phẩm</span></div><button class="powerup-slot" id="use-powerup" aria-label="Kích hoạt power-up"><span id="held-powerup">?</span><span id="powerup-label">NHẶT VẬT PHẨM</span><kbd>SPACE</kbd></button></div><div class="touch-controls"><div class="touch-steering"><button data-input="ArrowLeft" aria-label="Rẽ trái">${icon("arrow", 26)}</button><button data-input="ArrowRight" aria-label="Rẽ phải">${icon("arrow", 26)}</button></div><div class="touch-actions"><button data-input="ArrowDown" aria-label="Phanh">PHANH</button><button data-input="Shift" aria-label="Drift">DRIFT</button></div></div><div id="race-modal"></div>`;
   document.body.appendChild(race);
   document.body.classList.add("is-racing");
+  minimap = new RaceMinimap(race.querySelector<SVGSVGElement>("#hud-minimap")!);
   try {
     game = new RaceGame(race.querySelector("canvas")!, {
       character: profile.character,
@@ -468,7 +645,16 @@ function handleGameEvent(e: GameEvent) {
     const el = document.getElementById(id);
     if (el) el.textContent = text;
   };
+  if (e.type === "circuit") minimap?.setCircuit(e.points as MapPoint[]);
   if (e.type === "hud") {
+    if (e.racers) minimap?.update(e.racers as MapRacer[]);
+    if (e.corner)
+      updateCornerAdvice(
+        e.corner as CornerAdvice,
+        Number(e.speed),
+        Boolean(e.offroad),
+        Boolean(e.gripWarning),
+      );
     set("hud-speed", String(Math.round(Number(e.speed))));
     const p = document.getElementById("hud-position");
     if (p)
@@ -578,6 +764,7 @@ function leaveRace() {
   raceOnline = false;
   game?.destroy();
   game = null;
+  minimap = null;
   clearInterval(networkInterval);
   clearTimeout(popupTimeout);
   if (network) {
@@ -622,4 +809,6 @@ document.addEventListener("keydown", (e) => {
   }
 });
 render();
+subscribeAppState(updateAppInstallCard);
+void initPwa();
 if (new URLSearchParams(location.search).has("room")) friendsModal();

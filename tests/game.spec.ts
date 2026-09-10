@@ -119,7 +119,8 @@ test("finishing three laps saves a result that survives reload", async ({
   await page.getByRole("button", { name: "Bắt đầu đua", exact: true }).click();
   // Advance browser time through real animation frames, physics and pickups.
   // No synthetic finish event or direct mutation of the game's private state.
-  await page.clock.runFor(145_000);
+  // Driving without steering now loses time on the shoulder and finishes last.
+  await page.clock.runFor(220_000);
   await expect(page.locator(".finish-panel")).toBeVisible();
   const result = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("turbo-buddies-profile") || "{}"),
@@ -127,7 +128,7 @@ test("finishing three laps saves a result that survives reload", async ({
   expect(result.races).toBe(1);
   expect(result.results).toHaveLength(1);
   expect(result.results[0].time).toBeGreaterThan(60);
-  expect(result.results[0].position).toBeGreaterThanOrEqual(1);
+  expect(result.results[0].position).toBe(4);
   expect(result.results[0].online).toBe(false);
   await page.getByRole("button", { name: "Về sảnh đua", exact: true }).click();
   await page.reload();

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="512" height="512">
+  <title>Turbo Buddies</title>
+  <rect width="64" height="64" fill="#c7f466"/>
+  <!-- The original favicon flag, centred and enlarged for home-screen icons. -->
+  <g transform="translate(32 32) scale(1.2) translate(-34 -32)">
+    <path d="M20 49V15h28v23H23" fill="#18352d"/>
+    <path fill="#fff" d="M23 18h7v7h-7zm14 0h7v7h-7zm-7 7h7v7h-7z"/>
+  </g>
+</svg>

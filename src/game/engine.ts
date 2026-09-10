@@ -1,4 +1,13 @@
 import { RaceAudio } from "./audio";
+import {
+  createCircuit,
+  cornerSpeed,
+  SEGMENT_LENGTH,
+  SEGMENT_COUNT,
+  TRACK_LENGTH,
+  type CircuitSample,
+} from "./circuit";
+import { drive, MAX_SPEED, BRAKING } from "./driving";
 
 export type GameEvent = { type: string; [key: string]: unknown };
 export type RaceOptions = {
@@ -41,7 +50,7 @@ type Track = {
   accent: string;
 };
 type Point = { x: number; y: number; w: number; scale: number };
-type Segment = {
+type Segment = CircuitSample & {
   index: number;
   curve: number;
   hill: number;
@@ -60,6 +69,13 @@ type Opponent = {
   phase: number;
   slow: number;
   color: string;
+  pace: number;
+  steering: number;
+  boostTimer: number;
+  driftCharge: number;
+  wasDrifting: boolean;
+  finished: boolean;
+  finishTime?: number;
 };
 type Pickup = {
   z: number;
@@ -156,14 +172,13 @@ const THEMES: Record<string, Track> = {
   },
 };
 
-const SEGMENT_LENGTH = 210;
-const SEGMENT_COUNT = 280;
-const TRACK_LENGTH = SEGMENT_LENGTH * SEGMENT_COUNT;
 const ROAD_WIDTH = 2000;
 const CAMERA_HEIGHT = 1020;
 const CAMERA_DEPTH = 0.85;
-const MAX_SPEED = 2120;
 const DRAW_DISTANCE = 135;
+// Convert compact circuit curvature into visible lateral displacement. Short
+// hairpins otherwise look almost straight in the long perspective projection.
+const CURVE_PROJECTION = 6;
 const CHARACTER_TUNING: Record<
   string,
   { speed: number; handling: number; boost: number }
@@ -220,11 +235,14 @@ export class RaceGame {
   private hitTimer = 0;
   private lightningTimer = 0;
   private driftCharge = 0;
+  private driftExitGrace = 0;
   private wasDrifting = false;
   private boosts = 0;
   private drifts = 0;
   private effectCooldown = 0;
-  private lastPickupIndex = -1;
+  private pickupCooldown = 0;
+  private gripWarning = false;
+  private offroad = false;
   private visualTime = 0;
   private readonly onKeyDown = (event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
@@ -282,65 +300,50 @@ export class RaceGame {
   }
 
   private createWorld() {
-    const bends =
-      this.options.track === "sunset"
-        ? 1.55
-        : this.options.track === "candy"
-          ? 1.2
-          : 1;
-    const elevation =
-      this.options.track === "sunset"
-        ? 1.7
-        : this.options.track === "candy"
-          ? 0.8
-          : 1;
+    const circuit = createCircuit(this.options.track);
     for (let i = 0; i < SEGMENT_COUNT; i++) {
-      const phase = (i / SEGMENT_COUNT) * Math.PI * 2;
+      const road = circuit.samples[i];
       this.segments.push({
+        ...road,
         index: i,
-        curve:
-          (Math.sin(phase * 2) * 0.86 + Math.sin(phase * 3) * 0.45) * bends,
-        hill:
-          (Math.sin(phase * 2) * 180 + Math.sin(phase * 3) * 80) * elevation,
         p1: { x: 0, y: 0, w: 0, scale: 0 },
         p2: { x: 0, y: 0, w: 0, scale: 0 },
         visible: false,
         clip: 0,
         z: 0,
       });
-      if (i > 9 && i % 7 === 0) {
-        const lane = Math.sin(i * 0.13) * 0.57;
-        this.pickups.push({
-          z: i * SEGMENT_LENGTH,
-          x: lane,
-          kind: "coin",
-          collectedLap: -1,
-        });
-        this.pickups.push({
-          z: (i + 1.4) * SEGMENT_LENGTH,
-          x: lane,
-          kind: "coin",
-          collectedLap: -1,
-        });
-      }
-      if (i > 10 && i % 36 === 18) {
-        [-0.65, 0, 0.65].forEach((x) =>
+      // Short coin trails suggest an apex; leave space to read the road.
+      if (i > 30 && i % 28 === 0) {
+        for (const offset of [0, 1.5, 3]) {
+          const sample =
+            circuit.samples[Math.floor(i + offset) % SEGMENT_COUNT];
           this.pickups.push({
-            z: i * SEGMENT_LENGTH,
-            x,
-            kind: "box",
+            z: (i + offset) * SEGMENT_LENGTH,
+            x: Math.sign(sample.curve) * sample.width * 0.4,
+            kind: "coin",
             collectedLap: -1,
-          }),
-        );
+          });
+        }
       }
-      if (i === 78 || i === 189)
-        this.pickups.push({
-          z: i * SEGMENT_LENGTH,
-          x: i === 78 ? -0.42 : 0.42,
-          kind: "pad",
-          collectedLap: -1,
-        });
     }
+    for (const station of circuit.boxStations)
+      this.pickups.push({
+        z: station.index * SEGMENT_LENGTH,
+        x: station.x * circuit.samples[station.index].width,
+        kind: "box",
+        collectedLap: -1,
+      });
+    for (const pad of circuit.boostPads)
+      this.pickups.push({
+        z: pad.index * SEGMENT_LENGTH,
+        x: pad.x * circuit.samples[pad.index].width,
+        kind: "pad",
+        collectedLap: -1,
+      });
+    this.emit({
+      type: "circuit",
+      points: circuit.samples.map((s) => ({ x: s.mapX, y: s.mapY })),
+    });
     const roster = ["fox", "bunny", "panda", "cat"];
     const selectedCharacter = roster.includes(this.options.character)
       ? this.options.character
@@ -348,23 +351,26 @@ export class RaceGame {
     const characters = roster.filter(
       (character) => character !== selectedCharacter,
     );
-    const adjustment =
-      this.options.difficulty === "easy"
-        ? -125
-        : this.options.difficulty === "hard"
-          ? 105
-          : 0;
+    const pace = { easy: 0.83, normal: 0.97, hard: 1.025 }[
+      this.options.difficulty
+    ];
     if (!this.options.multiplayer)
       characters.forEach((character, i) =>
         this.opponents.push({
           id: i,
           character,
-          distance: 550 + i * 740,
+          distance: 300 + i * 330,
           x: ((i % 3) - 1) * 0.55,
-          speed: 1820 + i * 24 + adjustment,
+          speed: 0,
           phase: i * 1.7,
           slow: 0,
           color: ["#bb9df8", "#80c9ac", "#fac16e"][i],
+          pace: pace - i * 0.012,
+          steering: 0,
+          boostTimer: 0,
+          driftCharge: 0,
+          wasDrifting: false,
+          finished: false,
         }),
       );
     if (this.options.multiplayer) {
@@ -605,37 +611,43 @@ export class RaceGame {
       this.keys.has("arrowdown") ||
       this.keys.has("s") ||
       this.keys.has("brake");
+    const direction = Number(right) - Number(left);
     const drift =
       (this.keys.has("shift") || this.keys.has("drift")) &&
-      (left || right) &&
-      this.speed > 900;
-    const direction = Number(right) - Number(left);
+      direction !== 0 &&
+      this.speed > 650;
     this.steering = lerp(this.steering, direction, Math.min(1, dt * 9));
-    const segment =
-      this.segments[
-        Math.floor(mod(this.distance, TRACK_LENGTH) / SEGMENT_LENGTH)
-      ];
-    const offroad = Math.abs(this.playerX) > 0.99;
-    const targetSpeed =
-      (this.boostTimer > 0 ? MAX_SPEED * 1.42 : MAX_SPEED) *
-      this.tuning.speed *
-      (brake ? 0.56 : 1) *
-      (offroad ? 0.68 : 1) *
-      (this.hitTimer > 0 ? 0.6 : 1);
-    this.speed += clamp(targetSpeed - this.speed, -dt * 2000, dt * 1000);
-    this.playerX +=
-      direction *
-      dt *
-      (drift ? 0.99 : 0.76) *
-      this.tuning.handling *
-      (0.4 + (this.speed / MAX_SPEED) * 0.6);
-    this.playerX -= ((segment.curve * this.speed) / MAX_SPEED) * dt * 0.16;
-    this.playerX = clamp(this.playerX, -1.65, 1.65);
+    const segment = this.roadAt(this.distance);
+    const vehicle = { x: this.playerX, speed: this.speed };
+    const handling = drive(
+      vehicle,
+      {
+        steering: this.steering,
+        brake,
+        drift,
+        boost: this.boostTimer > 0,
+        hit: this.hitTimer > 0,
+      },
+      segment,
+      this.tuning,
+      dt,
+    );
+    this.speed = vehicle.speed;
+    this.playerX = vehicle.x;
+    const offroad = Math.abs(this.playerX) > segment.width * 0.97;
+    this.offroad = offroad;
+    this.gripWarning = handling.sliding;
     const previousDistance = this.distance;
     this.distance += this.speed * dt;
     this.lap = Math.min(3, Math.floor(this.distance / TRACK_LENGTH) + 1);
-    if (drift) {
-      this.driftCharge = Math.min(1, this.driftCharge + dt * 0.65);
+    const validDrift =
+      handling.cornerDrift &&
+      !offroad &&
+      this.hitTimer <= 0 &&
+      direction * segment.curve > 0;
+    if (validDrift) {
+      this.driftExitGrace = 0.25;
+      this.driftCharge = Math.min(1, this.driftCharge + dt * 0.72);
       if (Math.random() < 0.65)
         this.burst(
           this.width * 0.5 + (Math.random() - 0.5) * 95,
@@ -644,44 +656,39 @@ export class RaceGame {
           1,
         );
     } else if (this.wasDrifting) {
-      if (this.driftCharge > 0.4) {
+      const cleanExit =
+        !offroad &&
+        this.hitTimer <= 0 &&
+        (Math.abs(segment.curve) <= 0.65 || direction * segment.curve >= 0);
+      // Turbo is earned by releasing a charged, controlled drift on the road.
+      if (!drift && cleanExit && this.driftCharge > 0.4) {
         this.drifts++;
-        this.boost(0.7 + this.driftCharge * 1.25);
+        this.boost(0.55 + this.driftCharge * 0.95);
         this.audio.play("drift");
         this.emit({
           type: "effect",
           name: "DRIFT HOÀN HẢO!",
-          description: "Thả drift để nhận mini turbo",
+          description: "Thoát cua sạch — mini turbo!",
           icon: "💨",
         });
       }
-      this.driftCharge = 0;
+      if (drift && cleanExit && Math.abs(segment.curve) <= 0.65) {
+        this.driftExitGrace = Math.max(0, this.driftExitGrace - dt);
+      } else this.driftExitGrace = 0;
+      if (this.driftExitGrace === 0) this.driftCharge = 0;
     }
-    this.wasDrifting = drift;
+    this.wasDrifting = validDrift || this.driftExitGrace > 0;
     this.boostTimer = Math.max(0, this.boostTimer - dt);
     this.shieldTimer = Math.max(0, this.shieldTimer - dt);
     this.magnetTimer = Math.max(0, this.magnetTimer - dt);
     this.hitTimer = Math.max(0, this.hitTimer - dt);
     this.lightningTimer = Math.max(0, this.lightningTimer - dt);
     this.effectCooldown = Math.max(0, this.effectCooldown - dt);
+    this.pickupCooldown = Math.max(0, this.pickupCooldown - dt);
     for (const opponent of this.opponents) {
-      opponent.slow = Math.max(0, opponent.slow - dt);
-      const rubber = clamp(
-        (this.distance - opponent.distance) / 18000,
-        -0.035,
-        0.075,
-      );
-      opponent.distance +=
-        opponent.speed *
-        (1 + rubber + Math.sin(this.elapsed * 0.7 + opponent.phase) * 0.025) *
-        (opponent.slow > 0 ? 0.5 : 1) *
-        dt;
-      opponent.x = clamp(
-        opponent.x + Math.sin(this.elapsed * 0.8 + opponent.phase) * dt * 0.07,
-        -0.78,
-        0.78,
-      );
+      this.updateOpponent(opponent, dt);
       if (
+        !opponent.finished &&
         Math.abs(opponent.distance - this.distance) < 170 &&
         Math.abs(opponent.x - this.playerX) < 0.18 &&
         this.hitTimer === 0 &&
@@ -689,7 +696,13 @@ export class RaceGame {
         this.boostTimer === 0
       ) {
         this.hitTimer = 0.5;
-        this.playerX += this.playerX < opponent.x ? -0.17 : 0.17;
+        opponent.slow = Math.max(opponent.slow, 0.5);
+        const separation = this.playerX < opponent.x ? -0.17 : 0.17;
+        this.playerX = clamp(this.playerX + separation, -1.65, 1.65);
+        opponent.x = clamp(opponent.x - separation, -1.65, 1.65);
+        this.driftCharge = 0;
+        this.driftExitGrace = 0;
+        this.wasDrifting = false;
         this.audio.play("hit");
         this.burst(this.width / 2, this.height * 0.75, "#ffe888", 10);
       }
@@ -701,7 +714,9 @@ export class RaceGame {
             p.progress * TRACK_LENGTH > this.distance ||
             (p.finished && p.progress >= 3),
         ).length
-      : 1 + this.opponents.filter((o) => o.distance > this.distance).length;
+      : 1 +
+        this.opponents.filter((o) => o.finished || o.distance > this.distance)
+          .length;
     this.collectPickups(previousDistance);
     if (this.boostTimer > 0 && Math.random() < 0.5)
       this.burst(
@@ -724,6 +739,15 @@ export class RaceGame {
       this.sendHud();
     }
     if (this.distance >= TRACK_LENGTH * 3) {
+      this.elapsed -=
+        (this.distance - TRACK_LENGTH * 3) / Math.max(1, this.speed);
+      this.distance = TRACK_LENGTH * 3;
+      if (!this.options.multiplayer)
+        this.position =
+          1 +
+          this.opponents.filter(
+            (o) => o.finishTime !== undefined && o.finishTime <= this.elapsed,
+          ).length;
       this.finished = true;
       this.audio.quiet();
       this.audio.play("finish");
@@ -738,6 +762,158 @@ export class RaceGame {
         drifts: this.drifts,
       });
     }
+  }
+
+  private roadAt(distance: number): CircuitSample {
+    const index = mod(distance, TRACK_LENGTH) / SEGMENT_LENGTH;
+    const a = this.segments[Math.floor(index)];
+    const b = this.segments[(Math.floor(index) + 1) % SEGMENT_COUNT];
+    const t = index % 1;
+    return {
+      ...a,
+      curve: lerp(a.curve, b.curve, t),
+      width: lerp(a.width, b.width, t),
+    };
+  }
+
+  private updateOpponent(opponent: Opponent, dt: number) {
+    if (opponent.finished) return;
+    opponent.slow = Math.max(0, opponent.slow - dt);
+    opponent.boostTimer = Math.max(0, opponent.boostTimer - dt);
+    const tuning = CHARACTER_TUNING[opponent.character];
+    const road = this.roadAt(opponent.distance);
+    const skill = { easy: 0.85, normal: 0.96, hard: 1.02 }[
+      this.options.difficulty
+    ];
+    const canDrift = this.options.difficulty !== "easy";
+    const drifting =
+      canDrift && Math.abs(road.curve) > 0.65 && opponent.speed > 650;
+    let speedLimit =
+      MAX_SPEED *
+      tuning.speed *
+      opponent.pace *
+      (opponent.boostTimer > 0 ? 1.35 : 1);
+    // Brake according to stopping distance, including a second bend in a chicane.
+    for (let ahead = 0; ahead <= 14; ahead++) {
+      const distance = ahead * SEGMENT_LENGTH;
+      const next = this.roadAt(opponent.distance + distance);
+      const safe =
+        MAX_SPEED * cornerSpeed(next.curve, tuning.handling, canDrift) * skill;
+      if (Math.abs(next.curve) > 0.65)
+        speedLimit = Math.min(
+          speedLimit,
+          Math.sqrt(safe * safe + 2 * BRAKING * 0.8 * distance),
+        );
+    }
+    const entry = this.roadAt(
+      opponent.distance + Math.max(550, opponent.speed * 0.55),
+    );
+    let targetX =
+      Math.abs(road.curve) > 0.65
+        ? Math.sign(road.curve) * road.width * 0.22
+        : -Math.sign(entry.curve) * road.width * 0.36;
+    // Choose a passing lane when catching a car, rather than wandering randomly.
+    const traffic = [
+      { distance: this.distance, x: this.playerX },
+      ...this.opponents.filter((o) => o !== opponent && !o.finished),
+    ].filter(
+      (o) =>
+        o.distance > opponent.distance && o.distance - opponent.distance < 1100,
+    );
+    const ahead = traffic.sort((a, b) => a.distance - b.distance)[0];
+    if (ahead && Math.abs(ahead.x - targetX) < 0.34) {
+      const candidates = [-0.58, 0.58].map((x) => x * road.width);
+      targetX = candidates.sort((a, b) => {
+        const clearance = (x: number) =>
+          Math.min(...traffic.map((o) => Math.abs(o.x - x)));
+        return clearance(b) - clearance(a);
+      })[0];
+    }
+    const ratio = opponent.speed / MAX_SPEED;
+    const authority =
+      (drifting ? 1.3 : 0.92) * tuning.handling * (0.35 + ratio * 0.65);
+    const correction =
+      (road.curve * ratio * ratio * 0.34) / Math.max(0.2, authority);
+    const steer = clamp(correction + (targetX - opponent.x) * 2.8, -1, 1);
+    opponent.steering = lerp(
+      opponent.steering,
+      steer,
+      Math.min(1, dt * (5 + skill * 5)),
+    );
+    const result = drive(
+      opponent,
+      {
+        steering: opponent.steering,
+        brake: false,
+        drift: drifting,
+        boost: opponent.boostTimer > 0,
+        hit: opponent.slow > 0,
+        speedLimit,
+      },
+      road,
+      tuning,
+      dt,
+    );
+    if (result.cornerDrift) {
+      opponent.driftCharge = Math.min(1, opponent.driftCharge + dt * 0.72);
+    } else if (opponent.wasDrifting) {
+      if (!result.offroad && opponent.driftCharge > 0.4 && opponent.slow === 0)
+        opponent.boostTimer =
+          (0.55 + opponent.driftCharge * 0.95) * tuning.boost;
+      opponent.driftCharge = 0;
+    }
+    opponent.wasDrifting = result.cornerDrift;
+    opponent.distance += opponent.speed * dt;
+    if (opponent.distance >= TRACK_LENGTH * 3) {
+      opponent.finishTime =
+        this.elapsed -
+        (opponent.distance - TRACK_LENGTH * 3) / Math.max(1, opponent.speed);
+      opponent.distance = TRACK_LENGTH * 3;
+      opponent.finished = true;
+      opponent.speed = 0;
+    }
+  }
+
+  private cornerAdvice() {
+    // A roughly three-second lookahead also catches bends hidden by a crest.
+    const lookahead = Math.max(2800, this.speed * 3);
+    for (let ahead = 0; ahead <= lookahead; ahead += SEGMENT_LENGTH) {
+      const road = this.roadAt(this.distance + ahead);
+      if (Math.abs(road.curve) < 0.85) continue;
+      let peak = road;
+      for (
+        let offset = SEGMENT_LENGTH;
+        offset <= 7 * SEGMENT_LENGTH;
+        offset += SEGMENT_LENGTH
+      ) {
+        const next = this.roadAt(this.distance + ahead + offset);
+        if (next.curve * road.curve <= 0 || Math.abs(next.curve) < 0.65) break;
+        if (Math.abs(next.curve) > Math.abs(peak.curve)) peak = next;
+      }
+      const severity =
+        Math.abs(peak.curve) > 3.5
+          ? "hairpin"
+          : Math.abs(peak.curve) > 2
+            ? "sharp"
+            : "bend";
+      return {
+        direction: road.curve > 0 ? "right" : "left",
+        severity,
+        distance: Math.round(ahead / 100) * 10,
+        speed:
+          Math.floor(
+            (cornerSpeed(peak.curve, this.tuning.handling) * 180) / 5,
+          ) * 5,
+        name: peak.name,
+      };
+    }
+    return {
+      direction: "straight",
+      severity: "straight",
+      distance: 0,
+      speed: 180,
+      name: this.roadAt(this.distance).name,
+    };
   }
 
   private boost(seconds: number) {
@@ -758,6 +934,8 @@ export class RaceGame {
         const at = lap * TRACK_LENGTH + pickup.z;
         if (
           pickup.collectedLap === lap ||
+          (pickup.kind === "box" &&
+            (this.powerup !== null || this.pickupCooldown > 0)) ||
           at < previousDistance - 110 ||
           at > this.distance + 110
         )
@@ -766,7 +944,7 @@ export class RaceGame {
           pickup.kind === "coin" && this.magnetTimer > 0
             ? 2.7
             : pickup.kind === "box"
-              ? 0.33
+              ? 0.24
               : pickup.kind === "pad"
                 ? 0.37
                 : 0.3;
@@ -777,9 +955,7 @@ export class RaceGame {
           this.audio.play("coin");
           this.burst(this.width / 2, this.height * 0.69, "#ffcf5c", 6);
         } else if (pickup.kind === "box") {
-          if (this.powerup || this.lastPickupIndex === Math.floor(pickup.z))
-            continue;
-          this.lastPickupIndex = Math.floor(pickup.z);
+          this.pickupCooldown = 5;
           const ids: Powerup[] = [
             "nitro",
             "shield",
@@ -800,7 +976,7 @@ export class RaceGame {
             ...POWERUPS[this.powerup],
           });
         } else {
-          this.boost(1.75);
+          this.boost(1.1);
           if (this.effectCooldown <= 0) {
             this.emit({
               type: "effect",
@@ -828,6 +1004,33 @@ export class RaceGame {
       drift: this.driftCharge,
       powerup: this.powerup,
       boost: this.boostTimer > 0,
+      corner: this.cornerAdvice(),
+      gripWarning: this.gripWarning,
+      offroad: this.offroad,
+      racers: [
+        ...(this.options.multiplayer
+          ? this.remotePlayers.map((p) => ({
+              id: p.id,
+              character: p.character,
+              progress: p.progress,
+              player: false,
+              finished: !!p.finished,
+            }))
+          : this.opponents.map((o) => ({
+              id: `npc-${o.id}`,
+              character: o.character,
+              progress: o.distance / TRACK_LENGTH,
+              player: false,
+              finished: o.finished,
+            }))),
+        {
+          id: this.options.playerId || "player",
+          character: this.options.character,
+          progress: clamp(this.distance / TRACK_LENGTH, 0, 3),
+          player: true,
+          finished: this.finished,
+        },
+      ],
     });
   }
 
@@ -891,7 +1094,7 @@ export class RaceGame {
       playerPercent,
     );
     let x = 0;
-    let dx = -this.segments[baseIndex].curve * basePercent;
+    let dx = -this.segments[baseIndex].curve * basePercent * CURVE_PROJECTION;
     let maxY = h;
     const visible: Segment[] = [];
     const introLift = this.intro < 3 ? (1 - this.intro / 3) * 170 : 0;
@@ -914,7 +1117,7 @@ export class RaceGame {
       );
       segment.clip = maxY;
       x += dx;
-      dx += segment.curve;
+      dx += segment.curve * CURVE_PROJECTION;
       segment.visible =
         z > CAMERA_DEPTH && segment.p2.y < maxY && segment.p1.y > segment.p2.y;
       if (segment.visible) {
@@ -926,8 +1129,13 @@ export class RaceGame {
     ctx.fillRect(0, maxY, w, h - maxY);
     for (let n = visible.length - 1; n >= 0; n--) {
       const segment = visible[n];
-      const p1 = segment.p1;
-      const p2 = segment.p2;
+      const p1 = { ...segment.p1, w: segment.p1.w * segment.width };
+      const p2 = {
+        ...segment.p2,
+        w:
+          segment.p2.w *
+          this.segments[(segment.index + 1) % SEGMENT_COUNT].width,
+      };
       const alternate = Math.floor(segment.index / 3) % 2 === 0;
       this.polygon(theme.grass, [0, p1.y, w, p1.y, w, p2.y, 0, p2.y]);
       // A warm sand shoulder and candy-striped curb give the road a toy-like finish.
@@ -982,6 +1190,35 @@ export class RaceGame {
       const p = segment.p1;
       const scale = p.w / ROAD_WIDTH;
       if (scale > 0.65 || scale < 0.003) continue;
+      if (Math.abs(segment.curve) > 1.4 && segment.index % 4 === 0) {
+        // Trackside chevrons make the outside of tightening corners readable.
+        const side = -Math.sign(segment.curve);
+        const sx = p.x + p.w * (segment.width + 0.13) * side;
+        const size = scale * 420;
+        this.roundRect(
+          sx - size * 0.5,
+          p.y - size * 1.35,
+          size,
+          size * 0.65,
+          size * 0.08,
+          "#384249",
+        );
+        ctx.strokeStyle = "#fff092";
+        ctx.lineWidth = Math.max(1, size * 0.09);
+        ctx.beginPath();
+        const direction = Math.sign(segment.curve);
+        ctx.moveTo(sx - direction * size * 0.12, p.y - size * 1.22);
+        ctx.lineTo(sx + direction * size * 0.14, p.y - size * 1.03);
+        ctx.lineTo(sx - direction * size * 0.12, p.y - size * 0.84);
+        ctx.stroke();
+        ctx.fillStyle = "#636875";
+        ctx.fillRect(
+          sx - size * 0.035,
+          p.y - size * 0.7,
+          size * 0.07,
+          size * 0.7,
+        );
+      }
       if (segment.index % 11 === 0) {
         const side = segment.index % 22 === 0 ? -1 : 1;
         this.drawScenery(
@@ -1023,10 +1260,19 @@ export class RaceGame {
           py,
           size,
           opponent.character,
-          Math.sin(opponent.phase + this.visualTime) * 0.035,
+          opponent.steering * (opponent.wasDrifting ? -0.13 : -0.045),
           opponent.slow > 0,
           opponent.color,
         );
+        if (opponent.boostTimer > 0) {
+          this.ellipse(
+            px + pw * opponent.x,
+            py + size * 0.03,
+            size * 0.17,
+            size * 0.25,
+            "#8cebff",
+          );
+        }
       }
       for (const opponent of this.remotePlayers) {
         const distance = opponent.progress * TRACK_LENGTH;

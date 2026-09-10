@@ -4,6 +4,8 @@ const externalBaseURL = process.env.E2E_BASE_URL;
 
 export default defineConfig({
   testDir: "./tests",
+  testMatch: "**/*.spec.ts",
+  testIgnore: "**/pwa.spec.ts",
   timeout: 60_000,
   expect: { timeout: 8000 },
   fullyParallel: false,

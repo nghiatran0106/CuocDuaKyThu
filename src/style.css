@@ -378,6 +378,215 @@ main {
   border-radius: 30px;
   color: #788472;
 }
+.app-install-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 17px;
+  padding: 17px 20px;
+  margin-bottom: 20px;
+  border: 1px solid #dce7ce;
+  border-radius: 16px;
+  background: linear-gradient(115deg, #f1f7e8, #fdfefb 65%);
+}
+.app-install-card [hidden] {
+  display: none;
+}
+.app-install-art {
+  display: grid;
+  place-items: center;
+  width: 52px;
+  height: 62px;
+  border-radius: 16px;
+  background: #e0efc6;
+  color: #456239;
+}
+.app-install-copy .eyebrow {
+  display: block;
+  font-size: 7px;
+  letter-spacing: 1.2px;
+  color: #7c9067;
+  margin-bottom: 5px;
+}
+.app-install-copy > strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.app-install-copy > p {
+  margin-top: 2px;
+  color: #788674;
+  font-size: 10px;
+  line-height: 1.6;
+}
+.app-install-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 7px;
+  color: #7e8976;
+  font-size: 8px;
+  line-height: 1.5;
+}
+.app-install-status:before {
+  content: "";
+  display: block;
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: #aab5a0;
+}
+.app-install-card[data-offline-ready="true"] .app-install-status {
+  color: #648348;
+}
+.app-install-card[data-offline-ready="true"] .app-install-status:before {
+  background: #79a954;
+}
+.app-install-card[data-online="false"] .app-install-status:before {
+  background: #c28d49;
+}
+.app-install-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.app-install-actions .btn {
+  padding: 11px 15px;
+  gap: 8px;
+  font-size: 10px;
+  min-height: 39px;
+}
+.app-install-actions .app-install-guide-button {
+  font-size: 8px;
+  font-weight: 500;
+  color: #7b8872;
+  gap: 3px;
+}
+.app-installed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #557b37;
+  background: #e8f2dc;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 9px;
+}
+.app-install-steps {
+  margin: 20px 0;
+  padding-left: 24px;
+  color: #72826b;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.app-install-steps li {
+  padding-left: 5px;
+  margin-bottom: 10px;
+}
+.app-install-steps li::marker {
+  color: #6a9250;
+  font-weight: 700;
+}
+.app-install-steps strong {
+  color: #36532f;
+}
+.app-ios-guide {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  font-size: 11px;
+  color: #5b7e45;
+}
+.app-ios-guide summary {
+  cursor: pointer;
+}
+#app-install-guide > .small-note {
+  margin: 12px 0 18px;
+}
+.settings-app-link {
+  border-top: 1px solid var(--border);
+  padding-top: 17px;
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+}
+.settings-app-link > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #76846d;
+  font-size: 11px;
+}
+.settings-app-link .text-button {
+  font-size: 11px;
+}
+#offline-friends > .text-button {
+  margin: 16px auto 0;
+}
+@media (max-width: 580px) {
+  .app-install-card {
+    grid-template-columns: 37px minmax(0, 1fr);
+    gap: 10px;
+    padding: 13px;
+    margin-bottom: 15px;
+    border-radius: 13px;
+  }
+  .app-install-art {
+    width: 37px;
+    height: 48px;
+    border-radius: 11px;
+  }
+  .app-install-art svg {
+    width: 24px;
+    height: 29px;
+  }
+  .app-install-copy .eyebrow {
+    font-size: 6px;
+    letter-spacing: 0.8px;
+    margin-bottom: 4px;
+  }
+  .app-install-copy > strong {
+    font-size: 11px;
+  }
+  .app-install-copy > p {
+    font-size: 8px;
+  }
+  .app-install-status {
+    font-size: 7px;
+    margin-top: 5px;
+  }
+  .app-install-actions {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 6px;
+  }
+  .app-install-actions .btn {
+    min-height: 42px;
+    padding: 10px 12px;
+    font-size: 9px;
+    gap: 6px;
+  }
+  .app-install-actions .app-install-guide-button {
+    min-height: 38px;
+    font-size: 7px;
+  }
+  .app-install-actions .app-update-button {
+    order: 2;
+  }
+  .app-installed-badge {
+    padding: 8px 7px;
+    font-size: 8px;
+  }
+  .app-install-steps {
+    font-size: 11px;
+  }
+}
 .hero {
   height: 364px;
   border-radius: 18px;
@@ -1782,6 +1991,155 @@ kbd {
   display: block;
   background: var(--lime);
   transition: width 0.15s linear;
+}
+.race-minimap,
+.corner-advice {
+  position: absolute;
+  pointer-events: none;
+  background: #143a36c9;
+  border: 1px solid #ffffff32;
+  box-shadow: 0 8px 26px #143c3222;
+  backdrop-filter: blur(10px);
+  border-radius: 14px;
+}
+.race-minimap {
+  top: max(86px, calc(env(safe-area-inset-top) + 61px));
+  right: 30px;
+  width: 210px;
+  padding: 12px 11px 10px;
+}
+.minimap-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #dbe9d9;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+}
+.minimap-heading > svg:last-child {
+  margin-left: auto;
+  color: #a8c9b1;
+}
+#hud-minimap {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  margin: 4px 0;
+}
+.minimap-road-edge,
+.minimap-road {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.minimap-road-edge {
+  stroke: #0c2928;
+  stroke-width: 10;
+}
+.minimap-road {
+  stroke: #c0d7c4;
+  stroke-width: 5;
+}
+.minimap-racer > circle {
+  stroke: #fff;
+  stroke-width: 1.6;
+}
+.minimap-racer.is-player > path {
+  stroke: #183b2c;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  paint-order: stroke;
+  filter: drop-shadow(0 0 3px #d1ff7877);
+}
+.minimap-legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  border-top: 1px solid #ffffff20;
+  padding-top: 8px;
+  font-size: 7px;
+  color: #d0e1d3;
+}
+.minimap-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.minimap-player-key {
+  width: 8px;
+  height: 10px;
+  background: #d1ff78;
+  clip-path: polygon(50% 0, 100% 100%, 50% 75%, 0 100%);
+}
+.minimap-rivals-key {
+  width: 6px;
+  height: 6px;
+  border: 1px solid #fff;
+  background: #df9cee;
+  border-radius: 50%;
+}
+.corner-advice {
+  top: max(150px, calc(env(safe-area-inset-top) + 125px));
+  left: 30px;
+  width: 242px;
+  padding: 13px 12px;
+}
+.corner-main {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.corner-arrow {
+  width: 39px;
+  height: 44px;
+  color: #d1ff78;
+}
+.corner-arrow path {
+  stroke: currentColor;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+.corner-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.corner-copy > small {
+  font-size: 7px;
+  letter-spacing: 1.3px;
+  color: #bdd4c5;
+}
+.corner-copy > strong {
+  font-size: 14px;
+  color: #fff;
+}
+.corner-copy > span {
+  font-size: 9px;
+  line-height: 1.6;
+  color: #d1e5cb;
+  font-variant-numeric: tabular-nums;
+}
+.corner-advice.is-braking {
+  border-color: #ffc08099;
+  background: #4e3428dd;
+}
+.is-braking .corner-arrow,
+.is-braking .corner-copy > span {
+  color: #ffd091;
+}
+.grip-warning {
+  border-top: 1px solid #ffffff25;
+  margin-top: 10px;
+  padding-top: 8px;
+  font-size: 9px;
+  line-height: 1.5;
+  color: #ffce9e;
 }
 .game-bottom {
   position: absolute;
@@ -3720,6 +4078,117 @@ kbd {
   }
   .pause-panel p {
     margin-bottom: 15px;
+  }
+}
+@media (max-width: 820px) {
+  .race-minimap {
+    top: 82px;
+    right: 18px;
+    width: 164px;
+    padding: 10px 9px 8px;
+  }
+  .corner-advice {
+    top: 132px;
+    left: 18px;
+    width: 230px;
+  }
+}
+@media (max-width: 580px) {
+  .race-minimap {
+    top: max(96px, calc(env(safe-area-inset-top) + 76px));
+    right: 12px;
+    width: 136px;
+    padding: 8px 7px;
+    border-radius: 11px;
+  }
+  .minimap-heading {
+    font-size: 6px;
+    letter-spacing: 0.9px;
+    gap: 4px;
+  }
+  .minimap-heading > svg {
+    width: 10px;
+    height: 10px;
+  }
+  .minimap-legend {
+    font-size: 6px;
+    gap: 3px;
+    padding-top: 6px;
+  }
+  .minimap-legend > span {
+    gap: 3px;
+  }
+  .corner-advice {
+    top: max(102px, calc(env(safe-area-inset-top) + 82px));
+    left: 12px;
+    width: min(218px, calc(100vw - 166px));
+    padding: 10px 8px;
+    border-radius: 11px;
+  }
+  .corner-main {
+    gap: 7px;
+  }
+  .corner-arrow {
+    width: 29px;
+    height: 36px;
+  }
+  .corner-copy {
+    gap: 4px;
+  }
+  .corner-copy > small {
+    font-size: 6px;
+    letter-spacing: 0.7px;
+  }
+  .corner-copy > strong {
+    font-size: 12px;
+  }
+  .corner-copy > span,
+  .grip-warning {
+    font-size: 8px;
+  }
+  .grip-warning {
+    margin-top: 8px;
+    padding-top: 6px;
+  }
+  .powerup-popup {
+    top: 33%;
+  }
+}
+@media (max-height: 540px) and (orientation: landscape) {
+  .race-minimap {
+    top: 70px;
+    right: max(22px, env(safe-area-inset-right));
+    width: 150px;
+    padding: 8px;
+    border-radius: 11px;
+  }
+  .minimap-heading {
+    font-size: 6px;
+    letter-spacing: 1px;
+  }
+  .minimap-legend {
+    padding-top: 5px;
+    font-size: 6px;
+  }
+  .corner-advice {
+    top: 93px;
+    left: max(25px, env(safe-area-inset-left));
+    width: 212px;
+    padding: 9px;
+  }
+  .corner-arrow {
+    width: 29px;
+    height: 35px;
+  }
+  .corner-copy > strong {
+    font-size: 12px;
+  }
+  .corner-copy > span,
+  .grip-warning {
+    font-size: 8px;
+  }
+  .corner-copy > small {
+    font-size: 6px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

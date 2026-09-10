@@ -5,9 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/build-pwa.mjs",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "playwright test"
+    "test": "playwright test",
+    "test:pwa": "npm run build && playwright test --config=playwright.pwa.config.ts",
+    "test:worker": "node --test tests/service-worker.test.mjs"
   },
   "dependencies": {
     "@fontsource/barlow-condensed": "^5.2.7",

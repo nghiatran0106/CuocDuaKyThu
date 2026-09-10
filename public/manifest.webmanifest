@@ -1,0 +1,35 @@
+{
+  "id": "./",
+  "name": "Turbo Buddies — Cuộc đua kỳ thú",
+  "short_name": "Turbo Buddies",
+  "description": "Đua xe, ôm cua và drift cùng hội bạn. Ba đường đua, mini map và chế độ đua với máy ngoại tuyến.",
+  "lang": "vi",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f6f7f3",
+  "theme_color": "#122b2b",
+  "categories": ["games", "entertainment"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
